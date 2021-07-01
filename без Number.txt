@@ -1,0 +1,766 @@
+	INCLUDE		STM32F4xx.s
+
+Array_1			EQU			0x00
+
+	AREA		SRAM1,		NOINIT,			READWRITE
+	SPACE		0x400
+Stack_Top
+	
+	AREA		RESET,		DATA,		READONLY
+	DCD			Stack_Top				;[0x000-0x003]
+	DCD			Start_Init				;[0x004-0x007]
+	SPACE		0x50					;[0x008-0x057]
+	DCD			EXIT0_IRQHandler		;[0x058-0x05B]	
+	SPACE		0xC0					;[0x008-0x11B]
+	DCD			TIM7_IRQHandler			;[0x11C-0x11F]
+	SPACE		0x60					;[0x008-0x11B]
+	DCD			RNG_IRQHandler			;[0x180-0x183]
+	;SPACE		0x17C					;[0x008-0x183]
+	;DCD			FPU_IRQHandler			;[0x184-0x187]
+	
+	AREA		PROGRAM,	CODE,		READONLY
+	ENTRY
+	
+PLL_FAIL
+	B			PLL_FAIL	
+	
+Start_Init
+	;LDR			R0,			=RCC_BASE
+	MOV			R0,			#(RCC_BASE & 0xFFFF)
+	MOVT		R0,			#(RCC_BASE >> 16)
+	LDR			R1,			[R0,		#RCC_PLLCFGR]
+;PLL Source= HSI
+	AND			R1,			R1,			#~RCC_PLLCFGR_PLLSRC
+;PLLM = 4	
+	BFC			R1,			#RCC_PLLCFGR_PLLM_Pos,		#6
+	ORR			R1,			R1,			#(16 << RCC_PLLCFGR_PLLM_Pos)
+;PLLN = 336
+	BFC			R1,			#RCC_PLLCFGR_PLLN_Pos,		#9
+	ORR			R1,			R1,			#(200 << RCC_PLLCFGR_PLLN_Pos)
+;PLLQ = 15
+	BFC			R1,			#RCC_PLLCFGR_PLLQ_Pos,		#4
+	ORR			R1,			R1,			#(15 << RCC_PLLCFGR_PLLQ_Pos)
+	STR			R1,			[R0,		#RCC_PLLCFGR]
+;PLL ON
+	LDR			R1,			[R0,		#RCC_CR]
+	ORR			R1,			R1,			#RCC_CR_PLLON
+	STR			R1,			[R0,		#RCC_CR]
+	;LDR			R2,			=1000000
+	MOV			R2,			#(1000000 & 0xFFFF)
+	MOVT		R2,			#(1000000 >> 16)	
+;	\|/
+Wait_For_PLL
+	LDR			R1,			[R0,		#RCC_CR]
+	AND			R1,			R1,			#RCC_CR_PLLRDY
+	CMP			R1,			#0
+	BNE			PLL_READY
+	SUB			R2,			R2,			#1
+	CMP			R2,			#0
+	BEQ			PLL_FAIL
+	B			Wait_For_PLL
+
+PLL_READY
+;GPIOA CLK Enable
+	LDR			R1,			[R0,		#RCC_AHB1ENR]
+	ORR			R1,			R1,			#RCC_AHB1ENR_GPIOAEN
+	STR			R1,			[R0,		#RCC_AHB1ENR]
+;SYSCFG CLK Enable
+	LDR			R1,			[R0,		#RCC_APB2ENR]
+	ORR			R1,			R1,			#RCC_APB2ENR_SYSCFGEN
+	STR			R1,			[R0,		#RCC_APB2ENR]
+;EXTI0 = PA
+	;LDR			R0,			=SYSCFG_BASE
+	MOV			R0,			#(SYSCFG_BASE & 0xFFFF)
+	MOVT		R0,			#(SYSCFG_BASE >> 16)
+	LDR			R1,			[R0,		#SYSCFG_EXTICR1]
+	AND			R1,			R1,			#~SYSCFG_EXTICR1_EXTI0
+	STR			R1,			[R0,		#SYSCFG_EXTICR1]
+;EXTI0 = Rising Edge
+	;LDR			R0,			=EXTI_BASE
+	MOV			R0,			#(EXTI_BASE & 0xFFFF)
+	MOVT		R0,			#(EXTI_BASE >> 16)
+	LDR			R1,			[R0,		#EXTI_RTSR]
+	ORR			R1,			R1,			#EXTI_RTSR_TR0
+	STR			R1,			[R0,		#EXTI_RTSR]
+	LDR			R1,			[R0,		#EXTI_FTSR]
+	AND			R1,			R1,			#~EXTI_FTSR_TR0
+	STR			R1,			[R0,		#EXTI_FTSR]
+;EXTI0 ENABLE
+	LDR			R1,			[R0,		#EXTI_IMR]
+	ORR			R1,			R1,			#EXTI_IMR_MR0
+	STR			R1,			[R0,		#EXTI_IMR]
+;EXTI0 IRQ Enable
+	;LDR			R0,			=NVIC_BASE
+	MOV			R0,			#(NVIC_BASE & 0xFFFF)
+	MOVT		R0,			#(NVIC_BASE >> 16)
+	LDR			R1,			[R0,		#NVIC_ISER0]
+	ORR			R1,			R1,			#(1 << EXTI0_IRQn)
+	STR			R1,			[R0,		#NVIC_ISER0]
+;RNG CLK Enable
+	;LDR			R0,			=RCC_BASE
+	MOV			R0,			#(RCC_BASE & 0xFFFF)
+	MOVT		R0,			#(RCC_BASE >> 16)
+	LDR			R1,			[R0,		#RCC_AHB2ENR]
+	ORR			R1,			R1,			#RCC_AHB2ENR_RNGEN
+	STR			R1,			[R0,		#RCC_AHB2ENR]
+;RNG Interrupt Request Enable
+	;LDR			R0,			=RNG_BASE
+	MOV			R0,			#(RNG_BASE & 0xFFFF)
+	MOVT		R0,			#(RNG_BASE >> 16)
+	LDR			R1,			[R0,		#RNG_CR]
+	AND			R1,			R1,			#~RNG_CR_RNGEN
+	ORR			R1,			R1,			#RNG_CR_IE
+	;MOV			R0,			#(RNG_CR_IE & 0xFFFF)
+	;MOVT		R0,			#(RNG_CR_IE >> 16)
+	STR			R1,			[R0,		#RNG_CR]
+	;LDR			R2,			=NVIC_BASE
+	MOV			R0,			#(NVIC_BASE & 0xFFFF)
+	MOVT		R0,			#(NVIC_BASE >> 16)
+	LDR			R1,			[R0,		#NVIC_ISER2]
+	ORR			R1,			R1,			#(1 << (RNG_IRQn - 64))
+	STR			R1,			[R0,		#NVIC_ISER2]
+	
+;Enabling FPU
+	;LDR			R0,			=FPU_BASE
+	MOV			R0,			#(FPU_BASE & 0xFFFF)
+	MOVT		R0,			#(FPU_BASE >> 16)
+	LDR			R1,			[R0,		#FPU_CPACR]
+	ORR			R1,			R1,			#(FPU_CPACR_CP10 + FPU_CPACR_CP11)
+	STR			R1,			[R0,		#FPU_CPACR]
+	DSB
+	ISB
+	;LDR			R0,			=NVIC_BASE
+	MOV			R0,			#(NVIC_BASE & 0xFFFF)
+	MOVT		R0,			#(NVIC_BASE >> 16)
+	LDR			R1,			[R0,		#NVIC_ISER2]
+	ORR			R1,			R1,			#(1 << (FPU_IRQn - 64))
+	STR			R1,			[R0,		#NVIC_ISER2]
+;	\|/
+Main_Loop
+	CMP			R7,			#1
+	BEQ			LCD
+	B			Main_Loop
+	
+RNG_IRQHandler_Fail
+	LDR			R1, 		[R0, 		#RNG_CR]
+	AND			R1,			R1,  		#~RNG_CR_RNGEN
+	STR			R1, 		[R0,		#RNG_CR]
+	LDR			R1,			[R0, 		#RNG_SR]
+	AND			R1,			R1, 		#~RNG_SR_CEIS
+	STR			R1,			[R0,		#~RNG_SR]
+	BX			LR
+LCD		
+	B			LCD_1
+BACK_1
+	B			Main_Loop
+RNG_IRQHandler
+	;LDR			R0,			=RNG_BASE
+	MOV			R0,			#(RNG_BASE & 0xFFFF)
+	MOVT		R0,			#(RNG_BASE >> 16)
+	LDR			R1,			[R0,		#RNG_SR]
+	CMP			R1,			#RNG_SR_DRDY
+	BNE			RNG_IRQHandler_Fail
+	LDR			R1,			[R0,		#RNG_CR]
+	AND			R1,			R1,			#~RNG_CR_RNGEN
+	STR			R1,			[R0,		#RNG_CR]
+	LDR			R1,			[R0,		#RNG_DR]
+;R1 => "76543210"	
+	;MOV		R0,		R1
+	MOV		R0,		R1
+	AND		R1,		R0,		#0xF0000000	;R1 = 0x30
+	LSR		R1,		R1,		#28			;R1 = 0x03  0xF0000000 0x0000000F
+	CMP		R1,		#10					;0x03 < 10
+	MOVLO	R3,		#0x30
+	MOVHS	R3,		#0x37
+	ADD		R1,		R1,		R3			;R1 = 0x33 = '3'
+	LDR		R2,		=SRAM1_BASE
+	ADD		R2,		R2,			#0
+	STR		R1,		[R2,		#Array_1]
+	
+;least significant 4 bits
+	AND		R1,		R0,		#0x0F000000
+	LSR		R1,		R1,		#24		;R2 = 0x0F
+	CMP		R1,		#10					;0x0F >= 10
+	MOVLO	R3,		#0x30
+	MOVHS	R3,		#0x37
+	ADD		R1,		R1,		R3			;R2 = 0x46 = 'F'
+	LDR		R2,		=SRAM1_BASE
+	ADD		R2,		R2,			#1
+	STR		R1,		[R2,		#Array_1]
+	
+	
+	AND		R1,		R0,		#0x00F00000
+	LSR		R1,		R1,		#20		;R2 = 0x0F
+	CMP		R1,		#10					;0x0F >= 10
+	MOVLO	R3,		#0x30
+	MOVHS	R3,		#0x37
+	ADD		R1,		R1,		R3			;R2 = 0x46 = 'F'
+	LDR		R2,		=SRAM1_BASE
+	ADD		R2,		R2,			#2
+	STR		R1,		[R2,		#Array_1]
+	
+	AND		R1,		R0,		#0x000F0000
+	LSR		R1,		R1,		#16		;R2 = 0x0F
+	CMP		R1,		#10					;0x0F >= 10
+	MOVLO	R3,		#0x30
+	MOVHS	R3,		#0x37
+	ADD		R1,		R1,		R3			;R2 = 0x46 = 'F'
+	LDR		R2,		=SRAM1_BASE
+	ADD		R2,		R2,			#3
+	STR		R1,		[R2,		#Array_1]
+
+	AND		R1,		R0,		#0x0000F000
+	LSR		R1,		R1,		#12		;R2 = 0x0F
+	CMP		R1,		#10					;0x0F >= 10
+	MOVLO	R3,		#0x30
+	MOVHS	R3,		#0x37
+	ADD		R1,		R1,		R3			;R2 = 0x46 = 'F'
+	LDR		R2,		=SRAM1_BASE
+	ADD		R2,		R2,			#4
+	STR		R1,		[R2,		#Array_1]
+	
+	AND		R1,		R0,		#0x00000F00
+	LSR		R1,		R1,		#8		;R2 = 0x0F
+	CMP		R1,		#10					;0x0F >= 10
+	MOVLO	R3,		#0x30
+	MOVHS	R3,		#0x37
+	ADD		R1,		R1,		R3			;R2 = 0x46 = 'F'
+	LDR		R2,		=SRAM1_BASE
+	ADD		R2,		R2,			#5
+	STR		R1,		[R2,		#Array_1]
+	
+	AND		R1,		R0,		#0x000000F0
+	LSR		R1,		R1,		#4		;R2 = 0x0F
+	CMP		R1,		#10					;0x0F >= 10
+	MOVLO	R3,		#0x30
+	MOVHS	R3,		#0x37
+	ADD		R1,		R1,		R3			;R2 = 0x46 = 'F'
+	LDR		R2,		=SRAM1_BASE
+	ADD		R2,		R2,			#6
+	STR		R1,		[R2,		#Array_1]
+	
+	AND		R1,		R0,		#0x0000000F		
+	CMP		R1,		#10					;0x0F >= 10
+	MOVLO	R3,		#0x30
+	MOVHS	R3,		#0x37
+	ADD		R1,		R1,		R3			;R2 = 0x46 = 'F'
+	LDR		R2,		=SRAM1_BASE
+	ADD		R2,		R2,			#7
+	STR		R1,		[R2,		#Array_1]	
+	MOV		R7,		#1
+	BX			LR
+LCD_1
+	B		LCD_2
+	
+EXIT0_IRQHandler
+;EXTI0 Interrupt Flag = 0
+	LDR			R0,			=EXTI_BASE
+	LDR			R1,			[R0,		#EXTI_PR]
+	ORR			R1,			R1,			#EXTI_PR_PR0
+	STR			R1,			[R0,		#EXTI_PR]
+;EXTI0 Interrupt Disable
+	;LDR			R1,			[R0,		#EXTI_IMR]
+	;AND			R1,			R1,			#~EXTI_IMR_MR0
+	;STR			R1,			[R0,		#EXTI_IMR]	
+;RNG ON
+	LDR			R0,			=RNG_BASE
+	LDR			R1,			[R0,		#RNG_CR]
+	ORR			R1,			R1,			#RNG_CR_RNGEN
+	STR			R1,			[R0,		#RNG_CR]
+	;MOV			R7,			#1
+	BX			LR
+BACK
+	B 			BACK_1
+LCD_2	
+	MOV			R7,			#0
+;PD[7-0] = Data[7-0]
+;PB5 = RS
+;PB4 = E
+;Uses TIM7
+	LDR			R0,			=RCC_BASE
+;GPIOB & GPIOD CLK Enable
+	LDR			R1,			[R0,		#RCC_AHB1ENR]
+	ORR			R1,			R1,			#(RCC_AHB1ENR_GPIOBEN + RCC_AHB1ENR_GPIODEN)
+	STR			R1,			[R0,		#RCC_AHB1ENR]
+;TIM7 CLK Enable
+	LDR			R1,			[R0,		#RCC_APB1ENR]
+	ORR			R1,			R1,			#RCC_APB1ENR_TIM7EN
+	STR			R1,			[R0,		#RCC_APB1ENR]
+;GPIOD[7-0] = Output
+	LDR			R0,			=GPIOD_BASE
+	LDR			R1,			[R0,		#GPIO_MODER]
+	BFC			R1,			#GPIO_MODER_MODER0_Pos,		#16
+	ORR			R1,			R1,			#(GPIO_MODER_MODER0_0 + GPIO_MODER_MODER1_0)
+	ORR			R1,			R1,			#(GPIO_MODER_MODER2_0 + GPIO_MODER_MODER3_0)
+	ORR			R1,			R1,			#(GPIO_MODER_MODER4_0 + GPIO_MODER_MODER5_0)
+	ORR			R1,			R1,			#(GPIO_MODER_MODER6_0 + GPIO_MODER_MODER7_0)
+	STR			R1,			[R0,		#GPIO_MODER]
+;GPIOB4 & GPIOB5 = Output
+	LDR			R0,			=GPIOB_BASE
+	LDR			R1,			[R0,		#GPIO_MODER]
+	BFC			R1,			#GPIO_MODER_MODER4_Pos,		#4
+	ORR			R1,			R1,			#(GPIO_MODER_MODER4_0 + GPIO_MODER_MODER5_0)
+	STR			R1,			[R0,		#GPIO_MODER]
+;TIM7 Config
+	LDR			R0,			=TIM7_BASE
+;F_APB1 = 16 MHz
+;Delay_Time = 50 ms
+;PSC = 1000
+	MOV			R1,			#999
+	STR			R1,			[R0,		#TIM_PSC]
+;ARR = 800
+	MOV			R1,			#800
+	STR			R1,			[R0,		#TIM_ARR]
+;CNT = 0
+	MOV			R1,			#0
+	STR			R1,			[R0,		#TIM_CNT]
+;TIM7 Interrupt Request Enable
+	LDR			R1,			[R0,		#TIM_DIER]
+	ORR			R1,			R1,			#TIM_DIER_UIE
+	STR			R1,			[R0,		#TIM_DIER]
+;TIM7 Interrupt Enable
+	LDR			R2,			=NVIC_BASE
+	LDR			R1,			[R2,		#NVIC_ISER1]
+	ORR			R1,			R1,			#(1 << (TIM7_IRQn - 32))
+	STR			R1,			[R2,		#NVIC_ISER1]
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+;R4 = TIM7 State
+	MOV			R4,			#1
+;R5 = Data to Send
+;	\|/
+Wait_For_LCD_Init
+	CMP			R4,			#0
+	BNE			Wait_For_LCD_Init
+;	\|/
+	;R1 = Array_1[3]
+	LDR			R2,			=SRAM1_BASE
+	ADD			R2,			R2,			#0
+;R1 = Array_1[6-3]
+	LDR			R5,			[R2,	#Array_1]
+	MOV			R4,			#13
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+;	\|/
+Wait_For_LCD_1
+	CMP			R4,			#0
+	BNE			Wait_For_LCD_1
+;	\|/
+	;R1 = Array_1[3]
+	LDR			R2,			=SRAM1_BASE
+	ADD			R2,			R2,			#1
+;R1 = Array_1[6-3]
+	LDR			R5,			[R2,	#Array_1]
+	MOV			R4,			#13
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+Wait_For_LCD_2
+	CMP			R4,			#0
+	BNE			Wait_For_LCD_2
+;	\|/
+	;R1 = Array_1[3]
+	LDR			R2,			=SRAM1_BASE
+	ADD			R2,			R2,			#2
+;R1 = Array_1[6-3]
+	LDR			R5,			[R2,	#Array_1]
+	MOV			R4,			#13
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+Wait_For_LCD_3
+	CMP			R4,			#0
+	BNE			Wait_For_LCD_3
+;	\|/
+	;R1 = Array_1[3]
+	LDR			R2,			=SRAM1_BASE
+	ADD			R2,			R2,			#3
+;R1 = Array_1[6-3]
+	LDR			R5,			[R2,	#Array_1]
+	MOV			R4,			#13
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+Wait_For_LCD_4
+	CMP			R4,			#0
+	BNE			Wait_For_LCD_4
+;	\|/
+	;R1 = Array_1[3]
+	LDR			R2,			=SRAM1_BASE
+	ADD			R2,			R2,			#4
+;R1 = Array_1[6-3]
+	LDR			R5,			[R2,	#Array_1]
+	MOV			R4,			#13
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+Wait_For_LCD_5
+	CMP			R4,			#0
+	BNE			Wait_For_LCD_5
+;	\|/
+	;R1 = Array_1[3]
+	LDR			R2,			=SRAM1_BASE
+	ADD			R2,			R2,			#5
+;R1 = Array_1[6-3]
+	LDR			R5,			[R2,	#Array_1]
+	MOV			R4,			#13
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+Wait_For_LCD_6
+	CMP			R4,			#0
+	BNE			Wait_For_LCD_6
+;	\|/
+	;R1 = Array_1[3]
+	LDR			R2,			=SRAM1_BASE
+	ADD			R2,			R2,			#6
+;R1 = Array_1[6-3]
+	LDR			R5,			[R2,	#Array_1]
+	MOV			R4,			#13
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+Wait_For_LCD_7
+	CMP			R4,			#0
+	BNE			Wait_For_LCD_7
+;	\|/
+	;R1 = Array_1[3]
+	LDR			R2,			=SRAM1_BASE
+	ADD			R2,			R2,			#7
+;R1 = Array_1[6-3]
+	LDR			R5,			[R2,	#Array_1]
+	MOV			R4,			#13
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	MOV			R9,			#0
+	
+
+;	\|/
+MVM
+	CMP			R9,			#1
+	BEQ			BACK
+	B			MVM
+TIM7_IRQHandler
+	LDR			R0,			=TIM7_BASE
+;TIM7 OFF
+	LDR			R1,			[R0,		#TIM_CR1]
+	AND			R1,			R1,			#~TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+;TIM7 UIF = 0
+	LDR			R1,			[R0,		#TIM_SR]
+	AND			R1,			R1,			#~TIM_SR_UIF
+	STR			R1,			[R0,		#TIM_SR]
+;State Machine (R4)
+;0 -- TIM7 Stop
+;1 -- Start Send Functional Set 1
+;2 -- Wait for Functional Set 1
+;3 -- Start Send Functional Set 2
+;4 -- Wait for Functional Set 2
+;	\|/
+	CMP			R4,			#0
+	BXEQ		LR
+;--------------------------------------
+	CMP			R4,			#1
+	BEQ			State_1
+	CMP			R4,			#2
+	BEQ			State_2
+	CMP			R4,			#3
+	BEQ			State_3
+	CMP			R4,			#4
+	BEQ			State_4
+	CMP			R4,			#5
+	BEQ			State_5
+	CMP			R4,			#6
+	BEQ			State_6
+	CMP			R4,			#7
+	BEQ			State_7
+	CMP			R4,			#8
+	BEQ			State_8_B
+	CMP			R4,			#9
+	BEQ			State_9_B
+	CMP			R4,			#10
+	BEQ			State_10_B
+;--------------------------------------
+	CMP			R4,			#11
+	BEQ			State_Start_Send_Comm_B
+	CMP			R4,			#12
+	BEQ			State_Send_Comm_B
+;--------------------------------------
+	CMP			R4,			#13
+	BEQ			State_Start_Send_Data_B
+	CMP			R4,			#14
+	BEQ			State_Send_Data_B
+;--------------------------------------
+	MOV			R4,			#0
+	BX			LR
+
+State_8_B
+	B			State_8
+
+State_9_B
+	B			State_9
+	
+State_10_B
+	B			State_10
+
+State_Start_Send_Comm_B
+	B			State_Start_Send_Comm
+	
+State_Send_Comm_B
+	B			State_Send_Comm
+
+State_Start_Send_Data_B
+	B			State_Start_Send_Data
+	
+State_Send_Data_B
+	B			State_Send_Data
+
+State_1
+	LDR			R2,			=GPIOD_BASE
+	MOV			R1,			#0x3C
+	STR			R1,			[R2,		#GPIO_ODR]
+	LDR			R2,			=GPIOB_BASE
+;E = 1
+	LDR			R1,			[R2,		#GPIO_ODR]
+	ORR			R1,			R1,			#GPIO_ODR_OD4
+	AND			R1,			R1,			#~GPIO_ODR_OD5
+	STR			R1,			[R2,		#GPIO_ODR]
+;Delay_Time = 100 us
+;PSC = 0
+	MOV			R1,			#0
+	STR			R1,			[R0,		#TIM_PSC]
+;ARR = 1600
+	MOV			R1,			#1600
+	STR			R1,			[R0,		#TIM_ARR]
+;CNT = 0
+	MOV			R1,			#0
+	STR			R1,			[R0,		#TIM_CNT]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_2
+	LDR			R2,			=GPIOB_BASE
+;E = 0
+	LDR			R1,			[R2,		#GPIO_ODR]
+	AND			R1,			R1,			#~GPIO_ODR_OD4
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_3
+	LDR			R2,			=GPIOB_BASE
+;E = 1
+	LDR			R1,			[R2,		#GPIO_ODR]
+	ORR			R1,			R1,			#GPIO_ODR_OD4
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_4
+	LDR			R2,			=GPIOB_BASE
+;E = 0
+	LDR			R1,			[R2,		#GPIO_ODR]
+	AND			R1,			R1,			#~GPIO_ODR_OD4
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_5
+	LDR			R2,			=GPIOD_BASE
+	MOV			R1,			#0x0F
+	STR			R1,			[R2,		#GPIO_ODR]
+	LDR			R2,			=GPIOB_BASE
+;E = 1
+	LDR			R1,			[R2,		#GPIO_ODR]
+	ORR			R1,			R1,			#GPIO_ODR_OD4
+	AND			R1,			R1,			#~GPIO_ODR_OD5
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_6
+	LDR			R2,			=GPIOB_BASE
+;E = 0
+	LDR			R1,			[R2,		#GPIO_ODR]
+	AND			R1,			R1,			#~GPIO_ODR_OD4
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_7
+	LDR			R2,			=GPIOD_BASE
+	MOV			R1,			#0x01
+	STR			R1,			[R2,		#GPIO_ODR]
+	LDR			R2,			=GPIOB_BASE
+;E = 1
+	LDR			R1,			[R2,		#GPIO_ODR]
+	ORR			R1,			R1,			#GPIO_ODR_OD4
+	AND			R1,			R1,			#~GPIO_ODR_OD5
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_8
+	LDR			R2,			=GPIOB_BASE
+;E = 0
+	LDR			R1,			[R2,		#GPIO_ODR]
+	AND			R1,			R1,			#~GPIO_ODR_OD4
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;Delay_Time = 2 ms
+;PSC = 1000
+	MOV			R1,			#999
+	STR			R1,			[R0,		#TIM_PSC]
+;ARR = 32
+	MOV			R1,			#32
+	STR			R1,			[R0,		#TIM_ARR]
+;CNT = 0
+	MOV			R1,			#0
+	STR			R1,			[R0,		#TIM_CNT]
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+	
+State_9
+	LDR			R2,			=GPIOD_BASE
+	MOV			R1,			#0x06
+	STR			R1,			[R2,		#GPIO_ODR]
+	LDR			R2,			=GPIOB_BASE
+;E = 1
+	LDR			R1,			[R2,		#GPIO_ODR]
+	ORR			R1,			R1,			#GPIO_ODR_OD4
+	AND			R1,			R1,			#~GPIO_ODR_OD5
+	STR			R1,			[R2,		#GPIO_ODR]
+;Delay_Time = 100 us
+;PSC = 0
+	MOV			R1,			#0
+	STR			R1,			[R0,		#TIM_PSC]
+;ARR = 1600
+	MOV			R1,			#1600
+	STR			R1,			[R0,		#TIM_ARR]
+;CNT = 0
+	MOV			R1,			#0
+	STR			R1,			[R0,		#TIM_CNT]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_10
+	LDR			R2,			=GPIOB_BASE
+;E = 0
+	LDR			R1,			[R2,		#GPIO_ODR]
+	AND			R1,			R1,			#~GPIO_ODR_OD4
+	STR			R1,			[R2,		#GPIO_ODR]
+	MOV			R4,			#-1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+;EXTI0 Interrupt Disable
+	LDR			R1,			[R0,		#EXTI_IMR]
+	ORR			R1,			R1,			#EXTI_IMR_MR0
+	STR			R1,			[R0,		#EXTI_IMR]
+State_Start_Send_Comm
+	LDR			R2,			=GPIOD_BASE
+	STR			R5,			[R2,		#GPIO_ODR]
+	LDR			R2,			=GPIOB_BASE
+;E = 1
+	LDR			R1,			[R2,		#GPIO_ODR]
+	ORR			R1,			R1,			#GPIO_ODR_OD4
+	AND			R1,			R1,			#~GPIO_ODR_OD5
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_Send_Comm
+	LDR			R2,			=GPIOB_BASE
+;E = 0
+	LDR			R1,			[R2,		#GPIO_ODR]
+	AND			R1,			R1,			#~GPIO_ODR_OD4
+	STR			R1,			[R2,		#GPIO_ODR]
+	MOV			R4,			#-1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	BX			LR
+
+State_Start_Send_Data
+	LDR			R2,			=GPIOD_BASE
+	STR			R5,			[R2,		#GPIO_ODR]
+	LDR			R2,			=GPIOB_BASE
+;E = 1
+	LDR			R1,			[R2,		#GPIO_ODR]
+	ORR			R1,			R1,			#(GPIO_ODR_OD4 + GPIO_ODR_OD5)
+	STR			R1,			[R2,		#GPIO_ODR]
+	ADD			R4,			R4,			#1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+
+State_Send_Data
+	LDR			R2,			=GPIOB_BASE
+;E = 0
+	LDR			R1,			[R2,		#GPIO_ODR]
+	AND			R1,			R1,			#~GPIO_ODR_OD4
+	STR			R1,			[R2,		#GPIO_ODR]
+	MOV			R4,			#-1
+;TIM7 ON
+	LDR			R1,			[R0,		#TIM_CR1]
+	ORR			R1,			R1,			#TIM_CR1_CEN
+	STR			R1,			[R0,		#TIM_CR1]
+	MOV			R9,			#1
+	BX			LR
+	
+	END

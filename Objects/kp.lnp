@@ -1,0 +1,7 @@
+--cpu=Cortex-M4.fp
+".\objects\kp.o"
+".\objects\stm32f4xx.o"
+--strict --scatter ".\Objects\kp.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list ".\Listings\kp.map" -o .\Objects\kp.axf
